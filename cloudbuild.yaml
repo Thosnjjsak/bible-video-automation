@@ -1,0 +1,19 @@
+steps:
+  # Step 1: Build the Docker image
+  - name: 'gcr.io/cloud-builders/docker'
+    args: [
+      'build', 
+      '-t', 'us-west2-docker.pkg.dev/$PROJECT_ID/video-repo/video-renderer:$COMMIT_SHA', 
+      '.'
+    ]
+
+  # Step 2: Push the image to Artifact Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args: [
+      'push', 
+      'us-west2-docker.pkg.dev/$PROJECT_ID/video-repo/video-renderer:$COMMIT_SHA'
+    ]
+
+# THE FIX: This section tells Cloud Build EXACTLY where to put the logs
+options:
+  logging: CLOUD_LOGGING_ONLY
