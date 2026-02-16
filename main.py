@@ -1,7 +1,6 @@
 import os
 from google.cloud import bigquery, storage
-from moviepy.editor import VideoFileClip, AudioFileClip, concatenate_videoclips, TextClip, CompositeVideoClip
-
+from moviepy import VideoFileClip, AudioFileClip, concatenate_videoclips, TextClip, CompositeVideoClip
 # Configuration
 PROJECT_ID = "project-36a10255-b110-4164-8f8"
 RAW_BUCKET_NAME = "project-raw-assets"
