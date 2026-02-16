@@ -37,14 +37,16 @@ def assemble_video():
     # 2. Download Video Assets from Folders (video_1, video_2, video_3)
     video_paths = []
     for i in range(1, 4):
-        prefix = f"video_{i}/"
-        blobs = storage_client.list_blobs(RAW_BUCKET_NAME, prefix=prefix)
-        for blob in blobs:
-            if blob.name.endswith(".mp4"):
-                local_path = f"temp_video_{i}.mp4"
-                blob.download_to_filename(local_path)
-                video_paths.append(local_path)
-                print(f"✅ Downloaded: {blob.name}")
+        # This matches your new naming: video_1_21.mp4, etc.
+        blob_name = f"video_{i}_{VIDEO_ID}.mp4" 
+        local_path = f"temp_video_{i}.mp4"
+        try:
+            raw_bucket.blob(blob_name).download_to_filename(local_path)
+            video_paths.append(local_path)
+            print(f"✅ Downloaded: {blob_name}")
+        except Exception:
+            print(f"❌ ERROR: {blob_name} not found. Check n8n naming!")
+            return
 
     # 3. Download Audio Asset from audio/ folder
     audio_filename = f"audio/audio_{VIDEO_ID}.mp3"
@@ -85,6 +87,15 @@ def assemble_video():
     dest_blob.upload_from_filename(output_filename)
     
     print(f"✅ SUCCESS: Video uploaded to {OUTPUT_BUCKET_NAME}/completed_videos/{output_filename}")
+
+    # --- NEW STEP 7: Update BigQuery Status ---
+    update_query = f"""
+        UPDATE `{PROJECT_ID}.30_verse.video_metadata`
+        SET status = 'completed'
+        WHERE video_id = {VIDEO_ID}
+    """
+    bq_client.query(update_query).result()
+    print(f"✅ BigQuery status updated to 'completed' for ID {VIDEO_ID}")
 
 if __name__ == "__main__":
     assemble_video()
