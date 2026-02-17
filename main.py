@@ -38,16 +38,20 @@ def assemble_video():
     # 2. Download Video Assets from Folders (video_1, video_2, video_3)
     video_paths = []
     for i in range(1, 4):
-        # This matches your new naming: video_1_21.mp4, etc.
-        blob_name = f"video_{i}_{VIDEO_ID}.mp4" 
-        local_path = f"temp_video_{i}.mp4"
-        try:
-            raw_bucket.blob(blob_name).download_to_filename(local_path)
+        # This prefix matches the folder name Veo creates
+        prefix = f"video_{i}_{VIDEO_ID}.mp4" 
+        blobs = list(raw_bucket.list_blobs(prefix=prefix))
+        
+        # Find the actual mp4 file inside that folder
+        video_blob = next((b for b in blobs if b.name.endswith('sample_0.mp4')), None)
+        
+        if video_blob:
+            local_path = f"temp_video_{i}.mp4"
+            video_blob.download_to_filename(local_path)
             video_paths.append(local_path)
-            print(f"✅ Downloaded: {blob_name}")
-        except Exception:
-            print(f"❌ ERROR: {blob_name} not found. Check n8n naming!")
-            return
+            print(f"✅ Downloaded: {video_blob.name}")
+        else:
+            print(f"❌ ERROR: Could not find sample_0.mp4 for clip {i}")
 
     # 3. Download Audio Asset from audio/ folder
     audio_filename = f"audio/audio_{VIDEO_ID}.mp3"
@@ -56,9 +60,10 @@ def assemble_video():
         raw_bucket.blob(audio_filename).download_to_filename(audio_path)
         print(f"✅ Downloaded audio: {audio_filename}")
     except Exception as e:
-        print(f"❌ ERROR: Audio file {audio_filename} not found: {e}")
-        return
-
+        error_msg = f"❌ ERROR: Audio file {audio_filename} not found: {e}"
+        print(error_msg)
+    # This forces the Job to fail (Red Light) and tell n8n it failed
+        raise RuntimeError(error_msg)
     # 4. Process with MoviePy
     print("🎬 Merging assets and adding captions...")
     clips = [VideoFileClip(p) for p in video_paths]
@@ -76,8 +81,8 @@ def assemble_video():
         method='caption', 
         size=(final_video.w * 0.8, None)
     )
-    txt_clip = txt_clip.set_duration(final_video.duration).set_position('center')
-    
+    txt_clip = TextClip(text, fontsize=70, color='white')
+    txt_clip = txt_clip.set_position(('center', 'bottom')).set_duration(video.duration)
     final_result = CompositeVideoClip([final_video, txt_clip])
 
     # 6. Export and Upload to Processing Bucket
@@ -99,4 +104,30 @@ def assemble_video():
     print(f"✅ BigQuery status updated to 'completed' for ID {VIDEO_ID}")
 
 if __name__ == "__main__":
-    assemble_video()
+    client = bigquery.Client()   
+    try:
+        assemble_video()
+        
+        # If it gets here, it succeeded!
+        print("✅ Process complete. Updating BigQuery to COMPLETED.")
+        query = f"UPDATE `project-36a10255-b110-4164-8f8.30_verse.video_metadata` SET status = 'COMPLETED' WHERE video_id = {VIDEO_ID}"
+        client.query(query).result()
+
+    except Exception as e:
+        error_msg = str(e).replace("'", "\\'") # Stop single quotes from breaking SQL
+        print(f"❌ FATAL ERROR: {error_msg}")
+        
+        # Write the error to BigQuery before we exit
+        try:
+            log_query = f"""
+                UPDATE `project-36a10255-b110-4164-8f8.30_verse.video_metadata` 
+                SET error_log = '{error_msg}', status = 'FAILED' 
+                WHERE video_id = {VIDEO_ID}
+            """
+            client.query(log_query).result()
+            print("✅ Error details saved to BigQuery.")
+        except Exception as bq_e:
+            print(f"⚠️ Failed to log to BigQuery: {bq_e}")
+
+        # VERY IMPORTANT: Re-raise the error so Cloud Run shows a Red Fail
+        raise e
