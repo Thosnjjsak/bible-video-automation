@@ -71,7 +71,7 @@ def main():
     # 8. Upload Final Video back to your Bucket
     client = storage.Client()
     # REPLACE with your actual bucket name
-    bucket = client.bucket("project-final-redners") 
+    bucket = client.bucket("project-final-renders") 
     blob = bucket.blob(output_filename)
     blob.upload_from_filename(local_output)
     
