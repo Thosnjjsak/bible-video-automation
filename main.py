@@ -47,20 +47,13 @@ def main():
     # 4. Assemble Video
     background = concatenate_videoclips(clips, method="compose")
 
-    # 5. Create Neo-Mint Captions (#9CAF88)
-    txt_clip = TextClip(
-        bible_quote,
-        fontsize=70,
-        color='#9CAF88', 
-        stroke_color='black',
-        stroke_width=2,
-        method='caption',
-        size=(900, None), # Center aligned with padding
-        font='Arial-Bold'
-    ).set_duration(total_duration).set_position('center')
+    # 5. Create Captions
+    txt_clip = TextClip(text=quote, font='Arial', font_size=70, color='white') \
+        .with_duration(total_duration) \
+        .with_position('center')
 
     # 6. Final Composite (Video + Text + Audio)
-    final_video = CompositeVideoClip([background, txt_clip]).set_audio(audio_clip)
+    final_video = CompositeVideoClip([background, txt_clip]).with_audio(audio_clip)
 
     # 7. Save Locally
     output_filename = f"final_bible_video_{video_id}.mp4"
