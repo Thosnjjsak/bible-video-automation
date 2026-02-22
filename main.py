@@ -1,9 +1,8 @@
 import os
 import requests
 import base64
-from moviepy.editor import VideoFileClip, concatenate_videoclips, TextClip, CompositeVideoClip, AudioFileClip
 from google.cloud import storage
-
+from moviepy import VideoFileClip, concatenate_videoclips, TextClip, CompositeVideoClip, AudioFileClip
 def main():
     # 1. Read Inputs from n8n Environment Variables
     video_id = os.environ.get('VIDEO_ID', '1').strip('"')
@@ -41,7 +40,7 @@ def main():
                     f.write(chunk)
         
         # Resize to 1080p Vertical and trim to fit
-        clip = VideoFileClip(temp_path).resize(height=1920).crop(x_center=540, width=1080)
+        clip = VideoFileClip(temp_path).resized(height=1920).cropped(x_center=540, width=1080)
         clip = clip.subclip(0, clip_duration)
         clips.append(clip)
 

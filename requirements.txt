@@ -1,4 +1,4 @@
 google-cloud-bigquery
 google-cloud-storage
-moviepy>=2.1.1
+moviepy>=2.0.0
 requests
