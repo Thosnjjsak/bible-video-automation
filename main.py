@@ -1,133 +1,81 @@
-# Trigger Test 1
 import os
-from google.cloud import bigquery, storage
-from moviepy import VideoFileClip, AudioFileClip, concatenate_videoclips, TextClip, CompositeVideoClip
-# Configuration
-PROJECT_ID = "project-36a10255-b110-4164-8f8"
-RAW_BUCKET_NAME = "project-raw-assets"
-OUTPUT_BUCKET_NAME = "project-tempe-processing"
-VIDEO_ID = os.getenv("VIDEO_ID")
+import requests
+import base64
+from moviepy.editor import VideoFileClip, concatenate_videoclips, TextClip, CompositeVideoClip, AudioFileClip
+from google.cloud import storage
 
-def assemble_video():
-    if not VIDEO_ID:
-        print("❌ ERROR: No VIDEO_ID environment variable found.")
-        return
-
-    print(f"🚀 Starting assembly for VIDEO_ID: {VIDEO_ID}")
+def main():
+    # 1. Read Inputs from n8n Environment Variables
+    video_id = os.environ.get('VIDEO_ID', '1').strip('"')
+    bible_quote = os.environ.get('BIBLE_QUOTE', '').strip('"')
+    voiceover_url = os.environ.get('VOICEOVER_URL', '').strip('"')
     
-    # Initialize Clients
-    bq_client = bigquery.Client(project=PROJECT_ID)
-    storage_client = storage.Client(project=PROJECT_ID)
-    raw_bucket = storage_client.bucket(RAW_BUCKET_NAME)
-    output_bucket = storage_client.bucket(OUTPUT_BUCKET_NAME)
+    # Process the 3 Pexels URLs
+    video_urls_raw = os.environ.get('VIDEO_URLS', '')
+    video_urls = [url.strip() for url in video_urls_raw.split(',') if url.strip()]
 
-    # 1. Fetch Latest Metadata from BigQuery
-    query = f"""
-        SELECT bible_quote FROM `{PROJECT_ID}.30_verse.video_metadata` 
-        WHERE video_id = {VIDEO_ID} 
-        AND status = 'pending'
-        ORDER BY created_at DESC LIMIT 1
-    """
-    results = list(bq_client.query(query).result())
-    if not results:
-        print(f"❌ ERROR: Pending record for ID {VIDEO_ID} not found in BigQuery.")
-        return
-    
-    bible_quote = results[0].bible_quote
+    print(f"Processing Video ID: {video_id}")
 
-    # 2. Download Video Assets from Folders (video_1, video_2, video_3)
-    video_paths = []
-    for i in range(1, 4):
-        # This prefix matches the folder name Veo creates
-        prefix = f"video_{i}_{VIDEO_ID}.mp4" 
-        blobs = list(raw_bucket.list_blobs(prefix=prefix))
+    # 2. Download Voiceover from GCP Bucket link
+    print("Downloading voiceover...")
+    audio_path = "/tmp/voiceover.mp3"
+    with requests.get(voiceover_url) as r:
+        r.raise_for_status()
+        with open(audio_path, 'wb') as f:
+            f.write(r.content)
+    audio_clip = AudioFileClip(audio_path)
+    # The video duration will match the audio duration
+    total_duration = audio_clip.duration 
+
+    # 3. Download and Process the 3 Pexels Scenes
+    clips = []
+    # Divide total duration by 3 to get length per clip
+    clip_duration = total_duration / 3 
+
+    for i, url in enumerate(video_urls[:3]):
+        temp_path = f"/tmp/scene_{i}.mp4"
+        print(f"Downloading scene {i+1}...")
+        with requests.get(url, stream=True) as r:
+            with open(temp_path, 'wb') as f:
+                for chunk in r.iter_content(8192):
+                    f.write(chunk)
         
-        # Find the actual mp4 file inside that folder
-        video_blob = next((b for b in blobs if b.name.endswith('sample_0.mp4')), None)
-        
-        if video_blob:
-            local_path = f"temp_video_{i}.mp4"
-            video_blob.download_to_filename(local_path)
-            video_paths.append(local_path)
-            print(f"✅ Downloaded: {video_blob.name}")
-        else:
-            print(f"❌ ERROR: Could not find sample_0.mp4 for clip {i}")
+        # Resize to 1080p Vertical and trim to fit
+        clip = VideoFileClip(temp_path).resize(height=1920).crop(x_center=540, width=1080)
+        clip = clip.subclip(0, clip_duration)
+        clips.append(clip)
 
-    # 3. Download Audio Asset from audio/ folder
-    audio_filename = f"audio/audio_{VIDEO_ID}.mp3"
-    audio_path = "voiceover.mp3"
-    try:
-        raw_bucket.blob(audio_filename).download_to_filename(audio_path)
-        print(f"✅ Downloaded audio: {audio_filename}")
-    except Exception as e:
-        error_msg = f"❌ ERROR: Audio file {audio_filename} not found: {e}"
-        print(error_msg)
-    # This forces the Job to fail (Red Light) and tell n8n it failed
-        raise RuntimeError(error_msg)
-    # 4. Process with MoviePy
-    print("🎬 Merging assets and adding captions...")
-    clips = [VideoFileClip(p) for p in video_paths]
-    final_video = concatenate_videoclips(clips, method="compose")
-    
-    audio = AudioFileClip(audio_path)
-    final_video = final_video.set_audio(audio)
+    # 4. Assemble Video
+    background = concatenate_videoclips(clips, method="compose")
 
-    # 5. Add Captions (Gold text, centered)
+    # 5. Create Neo-Mint Captions (#9CAF88)
     txt_clip = TextClip(
-        bible_quote, 
-        fontsize=50, 
-        color='gold', 
-        font='Arial-Bold', 
-        method='caption', 
-        size=(final_video.w * 0.8, None)
-    )
-    txt_clip = TextClip(text, fontsize=70, color='white')
-    txt_clip = txt_clip.set_position(('center', 'bottom')).set_duration(video.duration)
-    final_result = CompositeVideoClip([final_video, txt_clip])
+        bible_quote,
+        fontsize=70,
+        color='#9CAF88', 
+        stroke_color='black',
+        stroke_width=2,
+        method='caption',
+        size=(900, None), # Center aligned with padding
+        font='Arial-Bold'
+    ).set_duration(total_duration).set_position('center')
 
-    # 6. Export and Upload to Processing Bucket
-    output_filename = f"final_bible_video_{VIDEO_ID}.mp4"
-    final_result.write_videofile(output_filename, fps=24, codec="libx264", audio_codec="aac")
-    
-    dest_blob = output_bucket.blob(f"completed_videos/{output_filename}")
-    dest_blob.upload_from_filename(output_filename)
-    
-    print(f"✅ SUCCESS: Video uploaded to {OUTPUT_BUCKET_NAME}/completed_videos/{output_filename}")
+    # 6. Final Composite (Video + Text + Audio)
+    final_video = CompositeVideoClip([background, txt_clip]).set_audio(audio_clip)
 
-    # --- NEW STEP 7: Update BigQuery Status ---
-    update_query = f"""
-        UPDATE `{PROJECT_ID}.30_verse.video_metadata`
-        SET status = 'completed'
-        WHERE video_id = {VIDEO_ID}
-    """
-    bq_client.query(update_query).result()
-    print(f"✅ BigQuery status updated to 'completed' for ID {VIDEO_ID}")
+    # 7. Save Locally
+    output_filename = f"final_bible_video_{video_id}.mp4"
+    local_output = f"/tmp/{output_filename}"
+    final_video.write_videofile(local_output, fps=30, codec="libx264", audio_codec="aac")
+
+    # 8. Upload Final Video back to your Bucket
+    client = storage.Client()
+    # REPLACE with your actual bucket name
+    bucket = client.bucket("project-final-redners") 
+    blob = bucket.blob(output_filename)
+    blob.upload_from_filename(local_output)
+    
+    print(f"Success! Video uploaded: {output_filename}")
 
 if __name__ == "__main__":
-    client = bigquery.Client()   
-    try:
-        assemble_video()
-        
-        # If it gets here, it succeeded!
-        print("✅ Process complete. Updating BigQuery to COMPLETED.")
-        query = f"UPDATE `project-36a10255-b110-4164-8f8.30_verse.video_metadata` SET status = 'COMPLETED' WHERE video_id = {VIDEO_ID}"
-        client.query(query).result()
-
-    except Exception as e:
-        error_msg = str(e).replace("'", "\\'") # Stop single quotes from breaking SQL
-        print(f"❌ FATAL ERROR: {error_msg}")
-        
-        # Write the error to BigQuery before we exit
-        try:
-            log_query = f"""
-                UPDATE `project-36a10255-b110-4164-8f8.30_verse.video_metadata` 
-                SET error_log = '{error_msg}', status = 'FAILED' 
-                WHERE video_id = {VIDEO_ID}
-            """
-            client.query(log_query).result()
-            print("✅ Error details saved to BigQuery.")
-        except Exception as bq_e:
-            print(f"⚠️ Failed to log to BigQuery: {bq_e}")
-
-        # VERY IMPORTANT: Re-raise the error so Cloud Run shows a Red Fail
-        raise e
+    main()
