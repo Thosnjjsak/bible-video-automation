@@ -41,7 +41,7 @@ def main():
         
         # Resize to 1080p Vertical and trim to fit
         clip = VideoFileClip(temp_path).resized(height=1920).cropped(x_center=540, width=1080)
-        clip = clip.subclip(0, clip_duration)
+        clip = clip.subclipped(0, clip_duration)
         clips.append(clip)
 
     # 4. Assemble Video
