@@ -1,73 +1,83 @@
 import os
 import requests
-import base64
-from google.cloud import storage
-from moviepy import VideoFileClip, concatenate_videoclips, TextClip, CompositeVideoClip, AudioFileClip
+import math
+from moviepy import VideoFileClip, AudioFileClip, TextClip, CompositeVideoClip, concatenate_videoclips
+
 def main():
-    # 1. Read Inputs from n8n Environment Variables
-    video_id = os.environ.get('VIDEO_ID', '1').strip('"')
-    bible_quote = os.environ.get('BIBLE_QUOTE', '').strip('"')
-    voiceover_url = os.environ.get('VOICEOVER_URL', '').strip('"')
+    # 1. Environment Variables
+    # Ensure these match the keys you set in your n8n HTTP Request node
+    video_urls = os.environ.get('VIDEO_URLS', '').split(',')
+    voiceover_script = os.environ.get('VOICEOVER_SCRIPT', 'No script provided')
+    voiceover_url = os.environ.get('VOICEOVER_URL')
+    video_id = os.environ.get('VIDEO_ID', '1')
+
+    # 2. Audio Setup
+    # Download the voiceover from the URL provided by n8n
+    r_audio = requests.get(voiceover_url)
+    with open("audio.mp3", "wb") as f:
+        f.write(r_audio.content)
     
-    # Process the 3 Pexels URLs
-    video_urls_raw = os.environ.get('VIDEO_URLS', '')
-    video_urls = [url.strip() for url in video_urls_raw.split(',') if url.strip()]
+    audio_clip = AudioFileClip("audio.mp3")
+    total_duration = audio_clip.duration
 
-    print(f"Processing Video ID: {video_id}")
+    # 3. Balanced Background Assembly
+    # Distributes available videos evenly across the audio duration
+    num_videos = len(video_urls)
+    duration_per_clip = total_duration / num_videos
+    final_clips = []
 
-    # 2. Download Voiceover from GCP Bucket link
-    print("Downloading voiceover...")
-    audio_path = "/tmp/voiceover.mp3"
-    with requests.get(voiceover_url) as r:
-        r.raise_for_status()
-        with open(audio_path, 'wb') as f:
-            f.write(r.content)
-    audio_clip = AudioFileClip(audio_path)
-    # The video duration will match the audio duration
-    total_duration = audio_clip.duration 
-
-    # 3. Download and Process the 3 Pexels Scenes
-    clips = []
-    # Divide total duration by 3 to get length per clip
-    clip_duration = total_duration / 3 
-
-    for i, url in enumerate(video_urls[:3]):
-        temp_path = f"/tmp/scene_{i}.mp4"
-        print(f"Downloading scene {i+1}...")
-        with requests.get(url, stream=True) as r:
-            with open(temp_path, 'wb') as f:
-                for chunk in r.iter_content(8192):
-                    f.write(chunk)
+    for i, url in enumerate(video_urls):
+        temp_video_path = f"temp_{i}.mp4"
+        v_res = requests.get(url)
+        with open(temp_video_path, "wb") as f:
+            f.write(v_res.content)
         
-        # Resize to 1080p Vertical and trim to fit
-        clip = VideoFileClip(temp_path).resized(height=1920).cropped(x_center=540, width=1080)
-        clip = clip.subclipped(0, clip_duration)
-        clips.append(clip)
+        # MoviePy 2.0 Syntax: .resized() and .cropped() for 9:16 vertical
+        clip = VideoFileClip(temp_video_path).resized(height=1920).cropped(x_center=540, width=1080)
+        
+        # If the Pexels clip is shorter than its 10s slot, we loop it
+        if clip.duration < duration_per_clip:
+            loop_count = math.ceil(duration_per_clip / clip.duration)
+            clip = concatenate_videoclips([clip] * loop_count)
+        
+        # Trim the clip to fit exactly into its allocated time slot
+        clip = clip.subclipped(0, duration_per_clip)
+        final_clips.append(clip)
 
-    # 4. Assemble Video
-    background = concatenate_videoclips(clips, method="compose")
+    background = concatenate_videoclips(final_clips)
 
-    # 5. Create Captions
-    txt_clip = TextClip(text=bible_quote, font_size=70, color='white') \
-        .with_duration(total_duration) \
-        .with_position('center')
+    # 4. "Philosophaire" Style Text Effect
+    # Font Fallback: Direct path is best for Google Cloud Run (Linux)
+    font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+    font_selection = font_path if os.path.exists(font_path) else 'sans-serif'
 
-    # 6. Final Composite (Video + Text + Audio)
-    final_video = CompositeVideoClip([background, txt_clip]).with_audio(audio_clip)
+    # Create a drop shadow for better readability
+    shadow_clip = TextClip(
+        text=voiceover_script,
+        font=font_selection,
+        font_size=72,
+        color='black',
+        method='caption',
+        size=(910, None),
+        text_align='center'
+    ).with_duration(total_duration).with_position(('center', 965)).with_opacity(0.6)
 
-    # 7. Save Locally
-    output_filename = f"final_bible_video_{video_id}.mp4"
-    local_output = f"/tmp/{output_filename}"
-    final_video.write_videofile(local_output, fps=30, codec="libx264", audio_codec="aac")
+    # Main highlight text (Yellow)
+    txt_clip = TextClip(
+        text=voiceover_script,
+        font=font_selection,
+        font_size=70,
+        color='yellow',
+        method='caption',
+        size=(900, None),
+        text_align='center'
+    ).with_duration(total_duration).with_position(('center', 960))
 
-    # 8. Upload Final Video back to your Bucket
-    client = storage.Client()
-    # REPLACE with your actual bucket name
-    bucket = client.bucket("project-final-renders") 
-    blob = bucket.blob(output_filename)
-    blob.upload_from_filename(local_output)
+    # 5. Final Composition and Export
+    final_video = CompositeVideoClip([background, shadow_clip, txt_clip]).with_audio(audio_clip)
     
-    print(f"Success! Video uploaded: {output_filename}")
+    output_path = f"final_video_{video_id}.mp4"
+    final_video.write_videofile(output_path, fps=24, codec="libx264", audio_codec="aac")
 
 if __name__ == "__main__":
     main()
