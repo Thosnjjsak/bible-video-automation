@@ -7,8 +7,8 @@ from google.cloud import storage
 def main():
     # 1. Variables
     video_urls = os.environ.get('VIDEO_URLS', '').split(',')
-    # This line ensures we find the text even if the key name is slightly off
-    voiceover_script = os.environ.get('VOICEOVER_SCRIPT') or os.environ.get('BIBLE_QUOTE') or "No script provided"
+    # Triple-check backup for the script text
+    voiceover_script = os.environ.get('VOICEOVER_SCRIPT') or os.environ.get('BIBLE_QUOTE') or "Strength in the Peaks"
     voiceover_url = os.environ.get('VOICEOVER_URL')
     video_id = os.environ.get('VIDEO_ID', '1')
     dest_bucket_name = "project-final-renders"
@@ -19,9 +19,9 @@ def main():
     audio_clip = AudioFileClip("audio.mp3")
     total_duration = audio_clip.duration
 
-    # 3. Smoother Background Assembly
+    # 3. Background Assembly
     num_videos = len(video_urls)
-    duration_per_clip = (total_duration / num_videos) + 1 
+    duration_per_clip = total_duration / num_videos
     final_clips = []
 
     for i, url in enumerate(video_urls):
@@ -29,19 +29,21 @@ def main():
         v_res = requests.get(url)
         with open(temp_v, "wb") as f: f.write(v_res.content)
         
+        # Standardize to vertical 9:16
         clip = VideoFileClip(temp_v).resized(height=1920).cropped(x_center=540, width=1080)
         
         if clip.duration < duration_per_clip:
             loop_count = math.ceil(duration_per_clip / clip.duration)
             clip = concatenate_videoclips([clip] * loop_count)
         
-        # Add 1-second crossfade for smooth mountain transitions
-        clip = clip.subclipped(0, duration_per_clip).crossfadein(1.0)
+        # Trim to exact fit
+        clip = clip.subclipped(0, duration_per_clip)
         final_clips.append(clip)
 
-    background = concatenate_videoclips(final_clips, method="compose", padding=-1)
+    # Use 'compose' method for smoother transitions between different resolutions/bitrates
+    background = concatenate_videoclips(final_clips, method="compose")
 
-    # 4. Text Styling (Positioned at bottom-middle)
+    # 4. Text Styling (Bottom-Middle Position)
     font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
     font_selection = font_path if os.path.exists(font_path) else 'sans-serif'
 
