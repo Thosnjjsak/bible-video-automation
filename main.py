@@ -50,7 +50,7 @@ def main():
     txt_clip = TextClip(
         text=voiceover_script,
         font=font_selection, 
-        font_size=42, 
+        font_size=50, 
         color='yellow',
         method='caption', 
         size=(850, None), 
