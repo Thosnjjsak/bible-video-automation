@@ -48,7 +48,7 @@ def main():
     background = concatenate_videoclips(clips, method="compose")
 
     # 5. Create Captions
-    txt_clip = TextClip(text=bible_quote, font='DejaVu-Sans', font_size=70, color='white') \
+    txt_clip = TextClip(text=bible_quote, font_size=70, color='white') \
         .with_duration(total_duration) \
         .with_position('center')
 
